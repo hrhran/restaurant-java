@@ -3,6 +3,7 @@ import java.util.concurrent.*;
 
 public class Restaurant {
     public static void main(String[] args){
+        Object lock=new Object();
         BlockingQueue<String> q = new LinkedBlockingQueue<>();
         BlockingQueue<Integer> food = new LinkedBlockingQueue<>(3);
         Scanner sc=new Scanner(System.in);
@@ -13,10 +14,10 @@ public class Restaurant {
         System.out.println("------Restaurant is open!------");
         List<Thread> threads = new ArrayList<>();
         for(int i=1;i<=customerCount;i++) {
-            threads.add(new Customer(q));
+            threads.add(new Customer(lock,q));
         }
         for(int i=1;i<=waiterCount;i++) {
-            threads.add(new Waiter(q,food));
+            threads.add(new Waiter(lock,q,food));
         }
         for(Thread thread : threads){
             thread.start();
@@ -30,10 +31,12 @@ public class Restaurant {
 
 
 class Waiter extends Thread {
+    final Object lock;
     private final String waiterName;
     private final BlockingQueue<String> q;
     private final BlockingQueue<Integer> food;
-    public Waiter(BlockingQueue<String> q,BlockingQueue<Integer> food) {
+    public Waiter(Object lock,BlockingQueue<String> q,BlockingQueue<Integer> food) {
+        this.lock=lock;
         this.q = q;
         this.food=food;
         Random rand = new Random();
@@ -62,7 +65,11 @@ class Waiter extends Thread {
                 String name = q.take();
                 takeOrder(name);
                 pickFood();
-                System.out.println(name + " was served by " + waiterName);
+
+                synchronized (lock){
+                    System.out.println(name + " was served by " + waiterName);
+                    lock.notify();
+                }
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
@@ -72,9 +79,11 @@ class Waiter extends Thread {
 
 
 class Customer extends Thread{
+    final Object lock;
     private final String customerName;
     private final BlockingQueue<String> q;
-    public Customer (BlockingQueue<String> q) {
+    public Customer (Object lock,BlockingQueue<String> q) {
+        this.lock=lock;
         this.q = q;
         Random rand = new Random();
         int ran = rand.nextInt(200);
@@ -84,7 +93,8 @@ class Customer extends Thread{
 
     public void eating(){
         try{
-            sleep(3000);
+            sleep(12000);
+            System.out.println(customerName+" has completed eating his food");
         }catch (InterruptedException e){
             e.printStackTrace();
         }
@@ -95,6 +105,9 @@ class Customer extends Thread{
         System.out.println(customerName + " has entered the restaurant");
         try {
             q.put(this.customerName);
+            synchronized (lock){
+                lock.wait();
+            }
             eating();
         } catch (InterruptedException e) {
             e.printStackTrace();
