@@ -2,42 +2,62 @@ import java.util.*;
 import java.util.concurrent.*;
 
 public class Restaurant {
-    public static void main(String[] args){
-        Object lock=new Object();
-        BlockingQueue<String> q = new LinkedBlockingQueue<>();
-        BlockingQueue<Integer> food = new LinkedBlockingQueue<>(3);
+    private static int customerCount;
+    private static int waiterCount;
+    private static int chefCount;
+
+    static void getInputCount(){
         Scanner sc=new Scanner(System.in);
         System.out.print("Enter the number of Customer:");
-        int customerCount = sc.nextInt();
+        customerCount = sc.nextInt();
         System.out.print("Enter the number of Waiters:");
-        int waiterCount = sc.nextInt();
+        waiterCount = sc.nextInt();
+        System.out.print("Enter the number of Chefs:");
+        chefCount = sc.nextInt();
+    }
+    public static void main(String[] args){
+        Object serveLock=new Object();
+        Object prepLock=new Object();
+        BlockingQueue<String> q = new LinkedBlockingQueue<>();
+        BlockingQueue<String> food = new LinkedBlockingQueue<>();
+        List<String> readyFood = new ArrayList<>();
+        getInputCount();
         System.out.println("------Restaurant is open!------");
         List<Thread> threads = new ArrayList<>();
         for(int i=1;i<=customerCount;i++) {
-            threads.add(new Customer(lock,q));
+            threads.add(new Customer(serveLock,q));
         }
         for(int i=1;i<=waiterCount;i++) {
-            threads.add(new Waiter(lock,q,food));
+            threads.add(new Waiter(serveLock,prepLock,q,readyFood,food));
+        }
+        for(int i=1;i<=chefCount;i++) {
+            Thread chef=new Chef(prepLock,readyFood,food);
+            chef.setDaemon(true);
+            threads.add(chef);
         }
         for(Thread thread : threads){
             thread.start();
         }
-        Thread chef = new Chef(food);
-        chef.setDaemon(true);
-        chef.start();
+        //System.out.println("END OF"+"MAIN");
     }
 }
 
 
 
 class Waiter extends Thread {
-    final Object lock;
+    final Object serveLock;
+    final Object prepLock;
     private final String waiterName;
     private final BlockingQueue<String> q;
-    private final BlockingQueue<Integer> food;
-    public Waiter(Object lock,BlockingQueue<String> q,BlockingQueue<Integer> food) {
-        this.lock=lock;
+    private final BlockingQueue<String> food;
+    private List<String> readyFood;
+    String currentOrder;
+    String currentCustomer;
+    public Waiter(Object serveLock,Object prepLock,BlockingQueue<String> q,List<String> readyFood,BlockingQueue<String> food) {
+        this.serveLock=serveLock;
+        this.prepLock=prepLock;
         this.q = q;
+        this.readyFood=readyFood;
         this.food=food;
         Random rand = new Random();
         int ran = rand.nextInt(200);
@@ -45,56 +65,85 @@ class Waiter extends Thread {
         this.setName(this.waiterName);
     }
 
-    public void takeOrder(String name) throws InterruptedException{
-        System.out.println(name+"'s order has been taken by "+waiterName);
-        sleep(7000);
+
+    public void takeOrder(String name,String order) throws InterruptedException{
+        sleep(1000);
+        System.out.println(name+" has ordered "+order+" to "+waiterName);
+        sleep(5000);
     }
 
     public void pickFood() throws InterruptedException{
-        if(food.isEmpty())
-            System.out.println(waiterName+" is waiting for food to be prepared");
-        food.take();
-        sleep(3000);
+        food.put(currentOrder);
+        System.out.println(waiterName+" is waiting for "+currentOrder+" to be prepared");
+        sleep(2500);
+        synchronized (prepLock){
+            while(!readyFood.contains(currentOrder))
+                prepLock.wait();
+        }
+        System.out.println("Food Ready to Serve: "+readyFood);
+        sleep(2500);
+        readyFood.remove(currentOrder);
+        synchronized (serveLock) {
+            System.out.println(currentCustomer + " was served "+currentOrder+ " by " + waiterName);
+            serveLock.notify();
+        }
+        //System.out.println("END OF PICK FOOD");
+
     }
 
     @Override
     public void run() {
-        System.out.println(waiterName+" is available to take orders");
-        while (!q.isEmpty())
+        System.out.println(waiterName + " is available to take orders");
+        try{
+            sleep(1000);
+        }catch (InterruptedException e){e.printStackTrace();}
+        while (!q.isEmpty()){
             try {
-                String name = q.take();
-                takeOrder(name);
+                String customerNameAndOrder = q.take();
+                String[] nameAndOrder = customerNameAndOrder.split("\\+");
+                currentCustomer = nameAndOrder[0];
+                currentOrder = nameAndOrder[1];
+                takeOrder(currentCustomer,currentOrder);
                 pickFood();
-
-                synchronized (lock){
-                    System.out.println(name + " was served by " + waiterName);
-                    lock.notify();
-                }
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
+        }
+        //System.out.println("END OF"+currentThread().getName());
     }
 }
 
 
 
 class Customer extends Thread{
-    final Object lock;
+    final Object serveLock;
+    private final int foodOrder;
     private final String customerName;
+    String foodChoice;
     private final BlockingQueue<String> q;
-    public Customer (Object lock,BlockingQueue<String> q) {
-        this.lock=lock;
+    public Customer (Object serveLock,BlockingQueue<String> q) {
+        this.serveLock=serveLock;
         this.q = q;
         Random rand = new Random();
+        foodOrder = rand.nextInt(4);
         int ran = rand.nextInt(200);
         customerName=this.getClass().getSimpleName()+ran;
         this.setName(this.customerName);
     }
 
+    public void orderFood(int order) {
+        switch (order) {
+            case 0 -> foodChoice = "Biryani";
+            case 1 -> foodChoice = "Tandoori";
+            case 2 -> foodChoice = "Fried Rice";
+            case 3 -> foodChoice = "Noodles";
+        }
+    }
+
     public void eating(){
         try{
-            sleep(12000);
-            System.out.println(customerName+" has completed eating his food");
+            sleep(16000);
+            System.out.println(customerName+" has completed eating his "+foodChoice);
         }catch (InterruptedException e){
             e.printStackTrace();
         }
@@ -104,42 +153,70 @@ class Customer extends Thread{
     public void run() {
         System.out.println(customerName + " has entered the restaurant");
         try {
-            q.put(this.customerName);
-            synchronized (lock){
-                lock.wait();
+            orderFood(foodOrder);
+            String customerNameAndOrder=customerName+"+"+foodChoice;
+            q.put(customerNameAndOrder);
+            synchronized (serveLock){
+                serveLock.wait();
             }
             eating();
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+        //System.out.println("END OF"+currentThread().getName());
     }
 }
 
 
 class Chef extends Thread{
+    final Object prepLock;
     private final String chefName;
-    private final BlockingQueue<Integer> food;
-    public Chef (BlockingQueue<Integer> food) {
+    private final BlockingQueue<String> food;
+    private List<String> readyFood;
+    String currentFood;
+    public Chef (Object prepLock,List<String> readyFood,BlockingQueue<String> food) {
+        this.prepLock=prepLock;
+        this.readyFood=readyFood;
         this.food = food;
         Random rand = new Random();
-        int ran = rand.nextInt(10);
+        int ran = rand.nextInt(20);
         chefName=this.getClass().getSimpleName()+ran;
         this.setName(this.chefName);
     }
-    void cookBatch() throws InterruptedException{
-        sleep(6000);
-        food.put(1);
-        System.out.println(chefName+" has prepared food to serve");
+    void cookFood() throws InterruptedException{
+        currentFood=food.take();
+        switch (currentFood) {
+            case "Biryani" -> {
+                sleep(12000);
+                readyFood.add("Biryani");
+            }
+            case "Tandoori" -> {
+                sleep(9000);
+                readyFood.add("Tandoori");
+            }
+            case "Fried Rice" -> {
+                sleep(5000);
+                readyFood.add("Fried Rice");
+            }
+            case "Noodles" -> {
+                sleep(7000);
+                readyFood.add("Noodles");
+            }
+        }
+        System.out.println(chefName+" has prepared "+currentFood);
+        synchronized (prepLock){
+            prepLock.notify();
+        }
     }
     @Override
     public void run() {
         System.out.println(chefName+" is available for cooking");
         try {
-            while(food.size()<=3)
-                cookBatch();
-        } catch (InterruptedException e) {
+            while(true) cookFood();
+        } catch (Exception e) {
             e.printStackTrace();
         }
+        //System.out.println("END OF"+currentThread().getName());
     }
 
 }
